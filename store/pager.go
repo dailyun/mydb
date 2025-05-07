@@ -1,6 +1,9 @@
+// 文件: store/pager.go
 package store
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"os"
 )
@@ -13,7 +16,6 @@ type Pager struct {
 	nextPage int
 }
 
-// OpenPager 打开数据库文件
 func OpenPager(filename string) (*Pager, error) {
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
@@ -22,12 +24,11 @@ func OpenPager(filename string) (*Pager, error) {
 	info, _ := file.Stat()
 	pageCount := int(info.Size()) / PageSize
 	if pageCount == 0 {
-		pageCount = 1 // 至少从 1 开始
+		pageCount = 1
 	}
 	return &Pager{file: file, filename: filename, nextPage: pageCount + 1}, nil
 }
 
-// ReadPage 读取页
 func (p *Pager) ReadPage(pageNum int) ([]byte, error) {
 	if pageNum < 1 {
 		return nil, fmt.Errorf("pageNum must be greater than 0")
@@ -41,20 +42,71 @@ func (p *Pager) ReadPage(pageNum int) ([]byte, error) {
 	return data, nil
 }
 
-// WritePage 写入页
 func (p *Pager) WritePage(pageNum int, data []byte) error {
 	if len(data) != PageSize {
 		return fmt.Errorf("data length must be equal to PageSize")
 	}
 	offset := int64((pageNum - 1) * PageSize)
 	_, err := p.file.WriteAt(data, offset)
-	return err
+	if err != nil {
+		return err
+	}
+	return p.file.Sync()
 }
 
-// Close 关闭文件
 func (p *Pager) Close() error {
 	return p.file.Close()
+}
 
+func (p *Pager) AppendRow(pageNum int, row []byte) error {
+	page, err := p.ReadPage(pageNum)
+	if err != nil || bytes.Equal(page, make([]byte, PageSize)) {
+		page = make([]byte, PageSize)
+		binary.LittleEndian.PutUint32(page, 0)
+	}
+	existing := page
+	count := int(binary.LittleEndian.Uint32(existing[0:4]))
+	offset := 4
+	for i := 0; i < count; i++ {
+		if offset+4 > PageSize {
+			return fmt.Errorf("offset overflow reading length")
+		}
+		rowLen := int(binary.LittleEndian.Uint32(existing[offset:]))
+		offset += 4 + rowLen
+	}
+
+	if offset+4+len(row) > PageSize {
+		return fmt.Errorf("page full, can't append row of length %d at offset %d", len(row), offset)
+	}
+
+	binary.LittleEndian.PutUint32(existing[offset:], uint32(len(row)))
+	copy(existing[offset+4:], row)
+	binary.LittleEndian.PutUint32(existing[0:], uint32(count+1))
+
+	return p.WritePage(pageNum, existing)
+}
+
+func (p *Pager) ReadAllRows(pageNum int) ([][]byte, error) {
+	page, err := p.ReadPage(pageNum)
+	if err != nil {
+		return nil, err
+	}
+	count := int(binary.LittleEndian.Uint32(page[0:4]))
+	rows := [][]byte{}
+	offset := 4
+	for i := 0; i < count; i++ {
+		if offset+4 > PageSize {
+			break
+		}
+		rowLen := int(binary.LittleEndian.Uint32(page[offset:]))
+		offset += 4
+		if offset+rowLen > PageSize {
+			break
+		}
+		rows = append(rows, page[offset:offset+rowLen])
+		offset += rowLen
+	}
+	return rows, nil
 }
 
 func (p *Pager) AllocatePage() int {

@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"mySQLite/store"
 	"strings"
 )
 
@@ -20,8 +21,30 @@ func (db *Database) createTable(sql string) {
 		col := strings.Fields(strings.TrimSpace(field))[0]
 		colNames = append(colNames, col)
 	}
-	db.Tables[tableName] = &Table{Columns: colNames}
-	fmt.Println("Table created:", tableName)
+
+	// 替代错误逻辑：在 CREATE 开始前判断是否已存在
+	if _, exists := db.Tables[tableName]; exists {
+		fmt.Println("Table already exists, skip CREATE.")
+		return
+	}
+
+	root := db.Pager.AllocatePage()
+	db.Tables[tableName] = &Table{
+		Name:     tableName,
+		Columns:  colNames,
+		RootPage: root,
+		Pager:    db.Pager,
+	}
+
+	fmt.Printf("Table created: %s at root page %d\n", tableName, root)
+
+	metaRow := []string{tableName, strings.Join(colNames, "|"), fmt.Sprint(root)}
+	data, _ := store.EncodeRow(metaRow)
+	err := db.Pager.AppendRow(1, data)
+	if err != nil {
+		fmt.Println("Error writing table metadata:", err)
+	}
+
 }
 
 func (db *Database) insertInto(sql string) {
@@ -38,12 +61,19 @@ func (db *Database) insertInto(sql string) {
 	for i := range valList {
 		valList[i] = strings.Trim(strings.TrimSpace(valList[i]), "'")
 	}
-	if table, ok := db.Tables[tableName]; ok {
-		table.Rows = append(table.Rows, valList)
-		fmt.Println("Inserted into", tableName)
-	} else {
+	table, ok := db.Tables[tableName]
+	if !ok {
 		fmt.Println("Table not found:", tableName)
+		return
 	}
+
+	encoded, _ := store.EncodeRow(valList)
+	err := db.Pager.AppendRow(table.RootPage, encoded)
+	if err != nil {
+		fmt.Println("Error writing page:", err)
+		return
+	}
+	fmt.Println("Inserted into", tableName)
 }
 
 func (db *Database) selectFrom(sql string) {
@@ -59,8 +89,10 @@ func (db *Database) selectFrom(sql string) {
 		fmt.Println("Table not found:", tableName)
 		return
 	}
+	rawRows, _ := table.Pager.ReadAllRows(table.RootPage)
 	fmt.Println(table.Columns)
-	for _, row := range table.Rows {
+	for _, raw := range rawRows {
+		row, _ := store.DecodeRow(raw)
 		fmt.Println(row)
 	}
 }

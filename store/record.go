@@ -9,10 +9,16 @@ import (
 func EncodeRow(row []string) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	//  写入字段数
-	binary.Write(buf, binary.LittleEndian, int32(len(row)))
+	err := binary.Write(buf, binary.LittleEndian, int32(len(row)))
+	if err != nil {
+		return nil, err
+	}
 	for _, field := range row {
 		data := []byte(field)
-		binary.Write(buf, binary.LittleEndian, int32(len(data)))
+		err := binary.Write(buf, binary.LittleEndian, int32(len(data)))
+		if err != nil {
+			return nil, err
+		}
 		buf.Write(data)
 	}
 	return buf.Bytes(), nil
