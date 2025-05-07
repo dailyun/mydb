@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"fmt"
 	"mySQLite/store"
 	"strings"
@@ -68,12 +69,32 @@ func (db *Database) insertInto(sql string) {
 	}
 
 	encoded, _ := store.EncodeRow(valList)
-	err := db.Pager.AppendRow(table.RootPage, encoded)
-	if err != nil {
-		fmt.Println("Error writing page:", err)
+	rawPage, err := table.Pager.ReadPage(table.RootPage)
+	if err != nil || bytes.Equal(rawPage, make([]byte, store.PageSize)) {
+		page := store.NewLeafPage()
+		page.InsertCell(encoded)
+		data, _ := page.ToBytes()
+		err := table.Pager.WritePage(table.RootPage, data)
+		if err != nil {
+			return
+		}
+		fmt.Println("Inserted into table:", tableName)
 		return
 	}
-	fmt.Println("Inserted into", tableName)
+
+	page, err := store.PageFromBytes(rawPage)
+	if err != nil {
+		fmt.Println("Failed to parse B-tree page:", err)
+		return
+	}
+
+	if err := page.InsertCell(encoded); err != nil {
+		fmt.Println("Error inserting into table:", err)
+		return
+	}
+	data, _ := page.ToBytes()
+	table.Pager.WritePage(table.RootPage, data)
+	fmt.Println("Inserted into table:", tableName)
 }
 
 func (db *Database) selectFrom(sql string) {
@@ -89,10 +110,27 @@ func (db *Database) selectFrom(sql string) {
 		fmt.Println("Table not found:", tableName)
 		return
 	}
-	rawRows, _ := table.Pager.ReadAllRows(table.RootPage)
+	rawPage, err := table.Pager.ReadPage(table.RootPage)
+	if err != nil {
+		fmt.Println("Read error:", err)
+		return
+	}
+
+	page, err := store.PageFromBytes(rawPage)
+	if err != nil {
+		fmt.Println("Failed to parse B-tree page:", err)
+		return
+	}
+
 	fmt.Println(table.Columns)
-	for _, raw := range rawRows {
-		row, _ := store.DecodeRow(raw)
+	for _, cell := range page.Cells {
+		fmt.Printf("Raw cell length: %d\n", len(cell))
+		row, err := store.DecodeRow(cell)
+		if err != nil {
+			fmt.Println("Error decoding row:", err)
+			continue
+		}
 		fmt.Println(row)
 	}
+
 }
