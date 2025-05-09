@@ -19,7 +19,7 @@ func TestInsertSplitAndNewRoot(t *testing.T) {
 	data, _ := page.ToBytes()
 	pager.WritePage(rootPage, data)
 
-	for i := 1; i <= 4000; i++ {
+	for i := 1; i <= 40000; i++ {
 		row := []string{fmt.Sprintf("%02d", i), fmt.Sprintf("user%d", i)}
 		encoded, _ := store.EncodeRow(row)
 

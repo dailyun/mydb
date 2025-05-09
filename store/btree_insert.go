@@ -52,7 +52,6 @@ func InsertIntoLeafPage(pager *Pager, pageNo int, row []byte) (InsertResult, err
 		NewPageNo:   rightPage,
 	}, nil
 }
-
 func InsertRow(pager *Pager, rootPage int, row []byte) (int, error) {
 	if rootPage <= 0 {
 		return 0, fmt.Errorf("invalid rootPage: %d", rootPage)
@@ -67,7 +66,7 @@ func InsertRow(pager *Pager, rootPage int, row []byte) (int, error) {
 		return 0, fmt.Errorf("parse rootPage: %w", err)
 	}
 
-	// ✅ CASE 1: 叶子页
+	// ✅ CASE 1: 插入到叶子页
 	if root.Type == PageLeaf {
 		res, err := InsertIntoLeafPage(pager, rootPage, row)
 		if err != nil {
@@ -77,7 +76,7 @@ func InsertRow(pager *Pager, rootPage int, row []byte) (int, error) {
 			return rootPage, nil
 		}
 
-		// ➤ 分裂了：创建新的根
+		// ➤ 分裂，生成新 root
 		key, err := ExtractKey(res.NewPage.Cells[0])
 		if err != nil {
 			return 0, fmt.Errorf("ExtractKey on new right leaf failed: %w", err)
@@ -85,6 +84,7 @@ func InsertRow(pager *Pager, rootPage int, row []byte) (int, error) {
 		newRoot := NewInternalPage()
 		newRoot.LeftChild = uint32(rootPage)
 		newRoot.Cells = append(newRoot.Cells, EncodeInternalCell(key, uint32(res.NewPageNo)))
+		sortInternalCells(newRoot) // ✅ 确保 newRoot 也是有序的！
 		data, err := newRoot.ToBytes()
 		if err != nil {
 			return 0, fmt.Errorf("failed to encode new root: %w", err)
@@ -131,17 +131,17 @@ func InsertRow(pager *Pager, rootPage int, row []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	midKey, _, err := DecodeInternalCell(newChild.Cells[0]) // ✅ 正确
-
+	midKey, _, err := DecodeInternalCell(newChild.Cells[0])
 	if err != nil {
 		return 0, fmt.Errorf("ExtractKey failed for promotion: %w", err)
 	}
 	newCell := EncodeInternalCell(midKey, uint32(newChildPage))
 
-	root.Cells = append(root.Cells[:i], append([][]byte{newCell}, root.Cells[i:]...)...)
-	tmp := *root
-	tmp.Offsets = nil
-	if _, err := tmp.ToBytes(); err == nil {
+	root.Cells = append(root.Cells, newCell)
+	sortInternalCells(root) // ✅ 排序 root
+	root.Offsets = nil      // 重算 offset
+
+	if _, err := root.ToBytes(); err == nil {
 		data, _ := root.ToBytes()
 		pager.WritePage(rootPage, data)
 		return rootPage, nil
@@ -156,6 +156,9 @@ func InsertRow(pager *Pager, rootPage int, row []byte) (int, error) {
 	right.LeftChild = decodeRightMostChild(root, mid)
 	right.Cells = append(right.Cells, root.Cells[mid+1:]...)
 
+	sortInternalCells(left)
+	sortInternalCells(right)
+
 	rightPage := pager.AllocatePage()
 	pager.WritePage(rootPage, left.ToBytesMust())
 	pager.WritePage(rightPage, right.ToBytesMust())
@@ -168,6 +171,7 @@ func InsertRow(pager *Pager, rootPage int, row []byte) (int, error) {
 	newRoot := NewInternalPage()
 	newRoot.LeftChild = uint32(rootPage)
 	newRoot.Cells = append(newRoot.Cells, EncodeInternalCell(promoteKey, uint32(rightPage)))
+	sortInternalCells(newRoot) // ✅ 排序 newRoot too!
 	newRootPage := pager.AllocatePage()
 	pager.WritePage(newRootPage, newRoot.ToBytesMust())
 	return newRootPage, nil
