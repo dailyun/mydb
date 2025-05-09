@@ -21,12 +21,34 @@ func OpenPager(filename string) (*Pager, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, _ := file.Stat()
-	pageCount := int(info.Size()) / PageSize
-	if pageCount == 0 {
-		pageCount = 1
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
 	}
-	return &Pager{file: file, filename: filename, nextPage: pageCount + 1}, nil
+
+	size := info.Size()
+	pageCount := int(size / PageSize)
+	if size%PageSize != 0 {
+		pageCount++ // 补上残页
+	}
+	if pageCount == 0 {
+		pageCount = 1 // 至少一页起步
+		// 初始化页1为全0
+		empty := make([]byte, PageSize)
+		_, err := file.WriteAt(empty, 0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to write initial page 1: %w", err)
+		}
+	}
+
+	fmt.Printf("[Pager] Database has %d pages\n", pageCount)
+
+	return &Pager{
+		file:     file,
+		filename: filename,
+		nextPage: pageCount + 1, // 下一可分配页号
+	}, nil
 }
 
 func (p *Pager) ReadPage(pageNum int) ([]byte, error) {
@@ -110,6 +132,9 @@ func (p *Pager) ReadAllRows(pageNum int) ([][]byte, error) {
 }
 
 func (p *Pager) AllocatePage() int {
+	if p.nextPage < 2 {
+		p.nextPage = 2 // 保留页 1 用于元数据表（sqlite_master）
+	}
 	page := p.nextPage
 	p.nextPage++
 	return page
