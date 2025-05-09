@@ -139,3 +139,30 @@ func (p *Pager) AllocatePage() int {
 	p.nextPage++
 	return page
 }
+
+func (p *Pager) UpdateRowInPage(pageNum int, matchName string, newRow []byte) error {
+	page, err := p.ReadPage(pageNum)
+	if err != nil {
+		return err
+	}
+	count := int(binary.LittleEndian.Uint32(page[0:4]))
+	offset := 4
+	for i := 0; i < count; i++ {
+		rowLen := int(binary.LittleEndian.Uint32(page[offset:]))
+		offset += 4
+		rawData := page[offset : offset+rowLen]
+
+		fields, err := DecodeRow(rawData)
+		if err != nil && len(fields) > 0 && fields[0] == matchName {
+			newRowLen := len(newRow)
+			if newRowLen > rowLen {
+				return fmt.Errorf("new row length %d is greater than old row length %d", newRowLen, rowLen)
+			}
+			copy(page[offset:], newRow)
+			binary.LittleEndian.PutUint32(page[offset-4:], uint32(newRowLen))
+			return p.WritePage(pageNum, page)
+		}
+		offset += rowLen
+	}
+	return fmt.Errorf("table metadata not found: %s", matchName)
+}

@@ -1,7 +1,6 @@
 package db
 
 import (
-	"bytes"
 	"fmt"
 	"mySQLite/store"
 	"strings"
@@ -30,6 +29,13 @@ func (db *Database) createTable(sql string) {
 	}
 
 	root := db.Pager.AllocatePage()
+	leaf := store.NewLeafPage()
+	data, _ := leaf.ToBytes()
+	if err := db.Pager.WritePage(root, data); err != nil {
+		fmt.Println("Failed to write initial leaf page:", err)
+		return
+	}
+
 	db.Tables[tableName] = &Table{
 		Name:     tableName,
 		Columns:  colNames,
@@ -40,7 +46,7 @@ func (db *Database) createTable(sql string) {
 	fmt.Printf("Table created: %s at root page %d\n", tableName, root)
 
 	metaRow := []string{tableName, strings.Join(colNames, "|"), fmt.Sprint(root)}
-	data, _ := store.EncodeRow(metaRow)
+	data, _ = store.EncodeRow(metaRow)
 	err := db.Pager.AppendRow(1, data)
 	if err != nil {
 		fmt.Println("Error writing table metadata:", err)
@@ -68,33 +74,38 @@ func (db *Database) insertInto(sql string) {
 		return
 	}
 
-	encoded, _ := store.EncodeRow(valList)
-	rawPage, err := table.Pager.ReadPage(table.RootPage)
-	if err != nil || bytes.Equal(rawPage, make([]byte, store.PageSize)) {
-		page := store.NewLeafPage()
-		page.InsertCell(encoded)
-		data, _ := page.ToBytes()
-		err := table.Pager.WritePage(table.RootPage, data)
+	encoded, err := store.EncodeRow(valList)
+	if err != nil {
+		fmt.Println("Error encoding row:", err)
+		return
+	}
+
+	newRoot, err := store.InsertRow(table.Pager, table.RootPage, encoded) // ✅ 改这里
+	if err != nil {
+		fmt.Println("Error inserting row:", err)
+		return
+	}
+
+	if newRoot != table.RootPage {
+		oldRoot := table.RootPage
+		table.RootPage = newRoot
+		fmt.Printf("New root page: %d, old root page: %d\n", newRoot, oldRoot)
+
+		newMeta := []string{table.Name, strings.Join(table.Columns, "|"), fmt.Sprint(newRoot)}
+		data, err := store.EncodeRow(newMeta)
 		if err != nil {
+			fmt.Println("Error encoding table metadata:", err)
 			return
 		}
-		fmt.Println("Inserted into table:", tableName)
-		return
+		err = db.Pager.UpdateRowInPage(1, table.Name, data)
+		if err != nil {
+			fmt.Println("Error updating table metadata:", err)
+			return
+		}
+		fmt.Println("Table metadata updated successfully.")
 	}
 
-	page, err := store.PageFromBytes(rawPage)
-	if err != nil {
-		fmt.Println("Failed to parse B-tree page:", err)
-		return
-	}
-
-	if err := page.InsertCell(encoded); err != nil {
-		fmt.Println("Error inserting into table:", err)
-		return
-	}
-	data, _ := page.ToBytes()
-	table.Pager.WritePage(table.RootPage, data)
-	fmt.Println("Inserted into table:", tableName)
+	fmt.Println("Row inserted successfully.")
 }
 
 func (db *Database) selectFrom(sql string) {
@@ -110,27 +121,15 @@ func (db *Database) selectFrom(sql string) {
 		fmt.Println("Table not found:", tableName)
 		return
 	}
-	rawPage, err := table.Pager.ReadPage(table.RootPage)
+
+	rows, err := collectRowsFromTree(table.Pager, table.RootPage)
 	if err != nil {
 		fmt.Println("Read error:", err)
 		return
 	}
 
-	page, err := store.PageFromBytes(rawPage)
-	if err != nil {
-		fmt.Println("Failed to parse B-tree page:", err)
-		return
-	}
-
 	fmt.Println(table.Columns)
-	for _, cell := range page.Cells {
-		fmt.Printf("Raw cell length: %d\n", len(cell))
-		row, err := store.DecodeRow(cell)
-		if err != nil {
-			fmt.Println("Error decoding row:", err)
-			continue
-		}
+	for _, row := range rows {
 		fmt.Println(row)
 	}
-
 }
