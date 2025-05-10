@@ -153,7 +153,7 @@ func (p *Pager) UpdateRowInPage(pageNum int, matchName string, newRow []byte) er
 		rawData := page[offset : offset+rowLen]
 
 		fields, err := DecodeRow(rawData)
-		if err != nil && len(fields) > 0 && fields[0] == matchName {
+		if err == nil && len(fields) > 0 && fields[0] == matchName {
 			newRowLen := len(newRow)
 			if newRowLen > rowLen {
 				return fmt.Errorf("new row length %d is greater than old row length %d", newRowLen, rowLen)

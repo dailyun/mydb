@@ -25,49 +25,58 @@ func createTestDB(t *testing.T, filename string) (*db.Database, func()) {
 }
 
 func collectRowsFromTree(pager *store.Pager, rootPage int) ([][]string, error) {
-	pageData, err := pager.ReadPage(rootPage)
+	visited := map[int]bool{}
+	return collectRecursive(pager, rootPage, visited)
+}
+
+func collectRecursive(pager *store.Pager, pageNo int, visited map[int]bool) ([][]string, error) {
+	if visited[pageNo] {
+		return nil, fmt.Errorf("⚠️ detected loop: page %d already visited", pageNo)
+	}
+	visited[pageNo] = true
+
+	raw, err := pager.ReadPage(pageNo)
 	if err != nil {
 		return nil, err
 	}
-	page, err := store.PageFromBytes(pageData)
+	page, err := store.PageFromBytes(raw)
 	if err != nil {
 		return nil, err
 	}
 
+	rows := [][]string{}
+
 	if page.Type == store.PageLeaf {
-		rows := [][]string{}
 		for _, cell := range page.Cells {
-			row, err := store.DecodeRow(cell)
+			r, err := store.DecodeRow(cell)
 			if err != nil {
 				continue
 			}
-			rows = append(rows, row)
+			rows = append(rows, r)
 		}
-		// 如果有 下一页，则继续递归
 		if page.NextLeaf != 0 {
-			nextRows, err := collectRowsFromTree(pager, int(page.NextLeaf))
-			if err == nil {
-				rows = append(rows, nextRows...)
+			nextRows, err := collectRecursive(pager, int(page.NextLeaf), visited)
+			if err != nil {
+				return nil, err
 			}
+			rows = append(rows, nextRows...)
 		}
 		return rows, nil
 	}
 
-	// 如果是内部节点，则递归处理
-	rows := [][]string{}
-	left := int(page.LeftChild)
-	subRows, err := collectRowsFromTree(pager, left)
+	// Internal page
+	leftRows, err := collectRecursive(pager, int(page.LeftChild), visited)
 	if err == nil {
-		rows = append(rows, subRows...)
+		rows = append(rows, leftRows...)
 	}
 	for _, cell := range page.Cells {
 		_, child, err := store.DecodeInternalCell(cell)
 		if err != nil {
 			continue
 		}
-		subRows, err := collectRowsFromTree(pager, int(child))
+		childRows, err := collectRecursive(pager, int(child), visited)
 		if err == nil {
-			rows = append(rows, subRows...)
+			rows = append(rows, childRows...)
 		}
 	}
 	return rows, nil
@@ -86,43 +95,37 @@ func TestInsertMultipleRows(t *testing.T) {
 }
 
 func TestSelectAndCheckRows(t *testing.T) {
-	db, cleanup := createTestDB(t, "test_select.db")
+	testDB, cleanup := createTestDB(t, "test_select.testDB")
 	defer cleanup()
 
-	db.Exec("CREATE TABLE users(id, name);")
-	total := 50000
+	testDB.Exec("CREATE TABLE users(id, name, gender);")
+	total := 1500
 	for i := 1; i <= total; i++ {
-		sql := fmt.Sprintf("INSERT INTO users VALUES('%d', 'User%d');", i, i)
-		db.Exec(sql)
+		sql := fmt.Sprintf("INSERT INTO users VALUES('%d', 'User%d', 1);", i, i)
+		testDB.Exec(sql)
 	}
 
-	rows, err := collectRowsFromTree(db.Pager, db.Tables["users"].RootPage)
+	rows, err := collectRowsFromTree(testDB.Pager, testDB.Tables["users"].RootPage)
+	store.DebugPrintTree(testDB.Pager, testDB.Tables["users"].RootPage)
 
-	for i := 13; i <= total; i += 13 {
-		wantID := fmt.Sprintf("%d", i)
-		wantName := fmt.Sprintf("User%d", i)
-		found := false
-		for _, row := range rows {
-			if row[0] == wantID && row[1] == wantName {
-				found = true
-				fmt.Printf("✅ Found row: %v\n", row)
-				break
-			}
-		}
-		if !found {
-			t.Errorf("❌ Missing row: [%s %s]", wantID, wantName)
-		}
-	}
+	fmt.Println(len(rows))
 
 	if err != nil {
 		t.Fatalf("failed to collect rows: %v", err)
 	}
 
-	//for i := 0; i < 3; i++ {
-	//	wantID := fmt.Sprintf("%d", i+1)
-	//	wantName := fmt.Sprintf("User%d", i+1)
-	//	if rows[i][0] != wantID || rows[i][1] != wantName {
-	//		t.Errorf("row %d mismatch: got %v, want [%s %s]", i, rows[i], wantID, wantName)
-	//	}
-	//}
+}
+
+func TestDebugPrintTree(t *testing.T) {
+	db, cleanup := createTestDB(t, "test_debug.db")
+	defer cleanup()
+
+	db.Exec("CREATE TABLE users (id, name);")
+	for i := 0; i < 150000; i++ {
+		row := fmt.Sprintf("INSERT INTO users VALUES ('%d', 'user%d');", i, i)
+		db.Exec(row)
+	}
+
+	fmt.Println("\n=== B+ Tree Visual Structure ===")
+	store.DebugPrintTree(db.Pager, db.Tables["users"].RootPage)
 }

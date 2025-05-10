@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"mySQLite/store"
 )
 
@@ -19,49 +20,58 @@ func trimPadding(data []byte) []byte {
 }
 
 func collectRowsFromTree(pager *store.Pager, rootPage int) ([][]string, error) {
-	pageData, err := pager.ReadPage(rootPage)
+	visited := map[int]bool{}
+	return collectRecursive(pager, rootPage, visited)
+}
+
+func collectRecursive(pager *store.Pager, pageNo int, visited map[int]bool) ([][]string, error) {
+	if visited[pageNo] {
+		return nil, fmt.Errorf("⚠️ detected loop: page %d already visited", pageNo)
+	}
+	visited[pageNo] = true
+
+	raw, err := pager.ReadPage(pageNo)
 	if err != nil {
 		return nil, err
 	}
-	page, err := store.PageFromBytes(pageData)
+	page, err := store.PageFromBytes(raw)
 	if err != nil {
 		return nil, err
 	}
 
+	rows := [][]string{}
+
 	if page.Type == store.PageLeaf {
-		rows := [][]string{}
 		for _, cell := range page.Cells {
-			row, err := store.DecodeRow(cell)
+			r, err := store.DecodeRow(cell)
 			if err != nil {
 				continue
 			}
-			rows = append(rows, row)
+			rows = append(rows, r)
 		}
-		// 如果有 下一页，则继续递归
 		if page.NextLeaf != 0 {
-			nextRows, err := collectRowsFromTree(pager, int(page.NextLeaf))
-			if err == nil {
-				rows = append(rows, nextRows...)
+			nextRows, err := collectRecursive(pager, int(page.NextLeaf), visited)
+			if err != nil {
+				return nil, err
 			}
+			rows = append(rows, nextRows...)
 		}
 		return rows, nil
 	}
 
-	// 如果是内部节点，则递归处理
-	rows := [][]string{}
-	left := int(page.LeftChild)
-	subRows, err := collectRowsFromTree(pager, left)
+	// Internal page
+	leftRows, err := collectRecursive(pager, int(page.LeftChild), visited)
 	if err == nil {
-		rows = append(rows, subRows...)
+		rows = append(rows, leftRows...)
 	}
 	for _, cell := range page.Cells {
 		_, child, err := store.DecodeInternalCell(cell)
 		if err != nil {
 			continue
 		}
-		subRows, err := collectRowsFromTree(pager, int(child))
+		childRows, err := collectRecursive(pager, int(child), visited)
 		if err == nil {
-			rows = append(rows, subRows...)
+			rows = append(rows, childRows...)
 		}
 	}
 	return rows, nil
