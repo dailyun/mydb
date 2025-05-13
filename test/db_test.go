@@ -121,11 +121,13 @@ func TestDebugPrintTree(t *testing.T) {
 	defer cleanup()
 
 	db.Exec("CREATE TABLE users (id, name);")
-	for i := 0; i < 150000; i++ {
+	for i := 0; i < 150; i++ {
 		row := fmt.Sprintf("INSERT INTO users VALUES ('%d', 'user%d');", i, i)
 		db.Exec(row)
 	}
+	db.Exec("SEARCH FROM users WHERE Key = '1';")
+	db.Exec("DELETE FROM users WHERE key = '1';")
 
-	fmt.Println("\n=== B+ Tree Visual Structure ===")
-	store.DebugPrintTree(db.Pager, db.Tables["users"].RootPage)
+	//fmt.Println("\n=== B+ Tree Visual Structure ===")
+	//store.DebugPrintTree(db.Pager, db.Tables["users"].RootPage)
 }

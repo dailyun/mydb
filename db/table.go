@@ -108,28 +108,71 @@ func (db *Database) insertInto(sql string) {
 	fmt.Println("Row inserted successfully.")
 }
 
-func (db *Database) selectFrom(sql string) {
+// SEARCH FROM tab WHERE key = '123'
+func (db *Database) searchKey(sql string) {
 	sql = strings.TrimSuffix(sql, ";")
 	tokens := strings.Fields(sql)
-	if len(tokens) < 4 || strings.ToUpper(tokens[1]) != "*" || strings.ToUpper(tokens[2]) != "FROM" {
+	if len(tokens) < 6 || strings.ToUpper(tokens[1]) != "FROM" || strings.ToUpper(tokens[3]) != "WHERE" {
 		fmt.Println("Invalid SELECT syntax")
 		return
 	}
-	tableName := tokens[3]
+	tableName := tokens[2]
+	whereKey := strings.Trim(tokens[6], "'\"")
+
+	fmt.Printf("[DEBUG] Searching key = [%s]\n", whereKey)
+
 	table, ok := db.Tables[tableName]
 	if !ok {
 		fmt.Println("Table not found:", tableName)
 		return
 	}
 
-	rows, err := collectRowsFromTree(table.Pager, table.RootPage)
+	rowData, err := store.SearchRow(table.Pager, table.RootPage, whereKey)
 	if err != nil {
-		fmt.Println("Read error:", err)
+		fmt.Println("Error searching row:", err)
+		return
+	}
+	row, err := store.DecodeRow(rowData)
+	if err != nil {
+		fmt.Println("Error decoding row:", err)
+		return
+	}
+	fmt.Println(table.Columns)
+	fmt.Println(row)
+}
+
+// DELETE FROM tab WHERE key = '123'
+func (db *Database) deleteFrom(sql string) {
+	sql = strings.TrimSuffix(sql, ";")
+	tokens := strings.Fields(sql)
+	if len(tokens) < 6 || strings.ToUpper(tokens[0]) != "DELETE" || strings.ToUpper(tokens[1]) != "FROM" || strings.ToUpper(tokens[3]) != "WHERE" {
+		fmt.Println("Invalid DELETE syntax")
+		return
+	}
+	tableName := tokens[2]
+	whereKey := strings.Trim(tokens[6], "'\"")
+
+	fmt.Printf("[DEBUG] Searching key = [%s]\n", whereKey)
+
+	table, ok := db.Tables[tableName]
+	if !ok {
+		fmt.Println("Table not found:", tableName)
+		return
+	}
+	newRoot, err := store.DeleteRow(table.Pager, table.RootPage, whereKey)
+	if err != nil {
+		fmt.Println("Error deleting row:", err)
 		return
 	}
 
-	fmt.Println(table.Columns)
-	for _, row := range rows {
-		fmt.Println(row)
+	if newRoot != table.RootPage {
+		table.RootPage = newRoot
+		meta := []string{table.Name, strings.Join(table.Columns, "|"), fmt.Sprint(newRoot)}
+		data, _ := store.EncodeRow(meta)
+		db.Pager.UpdateRowInPage(1, table.Name, data)
+		fmt.Println("Updated root after delete")
 	}
+
+	fmt.Println("Row deleted successfully.")
+
 }

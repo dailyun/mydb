@@ -16,8 +16,10 @@ func (db *Database) Exec(sql string) {
 		db.createTable(sql)
 	case "INSERT":
 		db.insertInto(sql)
-	case "SELECT":
-		db.selectFrom(sql)
+	case "SEARCH":
+		db.searchKey(sql)
+	case "DELETE":
+		db.deleteFrom(sql)
 	default:
 		fmt.Println("Unsupported SQL:", sql)
 	}
