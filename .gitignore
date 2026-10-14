@@ -1,0 +1,14 @@
+# Local database files created by the executable and integration tests
+*.db
+*.db-*
+*.testDB
+
+# Test output
+*.test
+coverage.out
+coverage.html
+
+# Local editor and OS files
+.DS_Store
+.idea/
+.vscode/
